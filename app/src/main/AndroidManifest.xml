@@ -10,7 +10,7 @@
 
     <application
         android:label="WalkLog"
-        android:theme="@android:style/Theme.Material"
+        android:theme="@style/Theme.AppCompat"
         android:allowBackup="false">
 
         <activity

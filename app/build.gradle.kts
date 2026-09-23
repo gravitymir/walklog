@@ -1,11 +1,13 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // AGP 9+ содержит встроенную поддержку Kotlin — отдельный kotlin-плагин не нужен.
+    alias(libs.plugins.android.application)
 }
 
 android {
     namespace = "ie.onfoot.walklog"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "ie.onfoot.walklog"
@@ -24,12 +26,15 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
     }
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
 }

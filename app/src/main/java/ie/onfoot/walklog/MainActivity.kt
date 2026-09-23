@@ -45,7 +45,7 @@ class MainActivity : AppCompatActivity() {
 
         // ХЛОПУШКА: огромные часы — показать камере для синхронизации
         clock = TextView(this).apply {
-            textSize = 74f
+            textSize = 52f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
