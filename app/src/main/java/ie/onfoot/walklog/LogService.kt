@@ -149,9 +149,19 @@ class LogService : Service(), LocationListener {
                 return
             }
         }
+        // скорость (м/с) и азимут (°) — для twin-режима geoslate: сопоставление
+        // двух проходов одной улицы на поворотах; GPX 1.1 требует их в extensions
+        val ext = buildString {
+            if (loc.hasSpeed() || loc.hasBearing()) {
+                append("<extensions>")
+                if (loc.hasSpeed()) append("<speed>%.2f</speed>".format(Locale.US, loc.speed))
+                if (loc.hasBearing()) append("<course>%.1f</course>".format(Locale.US, loc.bearing))
+                append("</extensions>")
+            }
+        }
         w.write(
-            "<trkpt lat=\"%.7f\" lon=\"%.7f\"><ele>%.1f</ele><time>%s</time></trkpt>\n"
-                .format(Locale.US, loc.latitude, loc.longitude, loc.altitude, utc.format(Date(loc.time)))
+            "<trkpt lat=\"%.7f\" lon=\"%.7f\"><ele>%.1f</ele><time>%s</time>%s</trkpt>\n"
+                .format(Locale.US, loc.latitude, loc.longitude, loc.altitude, utc.format(Date(loc.time)), ext)
         )
         w.flush() // точка на диске сразу — смерть процесса не теряет трек
         points++
