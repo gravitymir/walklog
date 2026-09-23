@@ -50,6 +50,7 @@ class LogService : Service(), LocationListener {
     private var writer: FileWriter? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastLoc: Location? = null
+    private var lastWriteMs = 0L
     private val utc = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         .apply { timeZone = TimeZone.getTimeZone("UTC") }
 
@@ -111,6 +112,17 @@ class LogService : Service(), LocationListener {
 
     override fun onLocationChanged(loc: Location) {
         val w = writer ?: return
+        // Фильтр стояния: GPS шумит ±1–2 м, и без фильтра стоянка рисует клубок.
+        // Пропускаем точку ближе 1.5 м к последней записанной, но раз в 30 с
+        // пишем в любом случае — «сердцебиение», по треку видно длительность стоянки.
+        lastLoc?.let {
+            if (loc.distanceTo(it) < 1.5f && loc.time - lastWriteMs < 30_000) {
+                lastAccuracy = loc.accuracy
+                lastLat = loc.latitude
+                lastLon = loc.longitude
+                return
+            }
+        }
         w.write(
             "<trkpt lat=\"%.7f\" lon=\"%.7f\"><ele>%.1f</ele><time>%s</time></trkpt>\n"
                 .format(Locale.US, loc.latitude, loc.longitude, loc.altitude, utc.format(Date(loc.time)))
@@ -122,6 +134,7 @@ class LogService : Service(), LocationListener {
         lastLon = loc.longitude
         lastLoc?.let { meters += it.distanceTo(loc) }
         lastLoc = loc
+        lastWriteMs = loc.time
         if (points % 5 == 0) startInForeground() // обновляем счётчик в шторке
     }
 
