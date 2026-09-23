@@ -45,12 +45,25 @@ class LogService : Service(), LocationListener {
         @Volatile var lastFile: String? = null
         @Volatile var lastLat = 0.0
         @Volatile var lastLon = 0.0
+
+        // настройки (SharedPreferences "settings"), правятся из MainActivity
+        const val PREFS = "settings"
+        const val KEY_INTERVAL_S = "interval_s"   // период GPS-запросов, секунды
+        const val KEY_MIN_DIST_M = "min_dist_m"   // порог фильтра стояния, метры
+        const val DEF_INTERVAL_S = 1f
+        const val DEF_MIN_DIST_M = 1.5f
+        // поведение при START — всё включено по умолчанию (наш режим съёмки),
+        // другие пользователи могут снять галочки в Settings
+        const val KEY_DND = "dnd_on_start"           // «Не беспокоить» на время записи
+        const val KEY_LOCK = "lock_on_start"         // погасить и заблокировать экран
+        const val KEY_MINIMIZE = "minimize_on_start" // свернуть приложение
     }
 
     private var writer: FileWriter? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastLoc: Location? = null
     private var lastWriteMs = 0L
+    private var minDistM = DEF_MIN_DIST_M
     private val utc = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         .apply { timeZone = TimeZone.getTimeZone("UTC") }
 
@@ -85,8 +98,14 @@ class LogService : Service(), LocationListener {
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "walklog:rec")
             .apply { acquire(12 * 60 * 60 * 1000L) } // предохранитель: максимум 12 часов
 
+        // настройки читаются один раз на старте записи — меняются в Settings
+        val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val intervalMs = (prefs.getFloat(KEY_INTERVAL_S, DEF_INTERVAL_S) * 1000)
+            .toLong().coerceAtLeast(100L)
+        minDistM = prefs.getFloat(KEY_MIN_DIST_M, DEF_MIN_DIST_M).coerceAtLeast(0f)
+
         val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this)
+        lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, intervalMs, 0f, this)
 
         running = true
         startInForeground()
@@ -105,6 +124,13 @@ class LogService : Service(), LocationListener {
             wakeLock?.release()
             wakeLock = null
             running = false
+            // возвращаем звонки: «Не беспокоить» включался на время записи
+            val nm = getSystemService(NotificationManager::class.java)
+            if (nm.isNotificationPolicyAccessGranted &&
+                nm.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+            ) {
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+            }
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -113,10 +139,10 @@ class LogService : Service(), LocationListener {
     override fun onLocationChanged(loc: Location) {
         val w = writer ?: return
         // Фильтр стояния: GPS шумит ±1–2 м, и без фильтра стоянка рисует клубок.
-        // Пропускаем точку ближе 1.5 м к последней записанной, но раз в 30 с
+        // Пропускаем точку ближе minDistM к последней записанной, но раз в 30 с
         // пишем в любом случае — «сердцебиение», по треку видно длительность стоянки.
         lastLoc?.let {
-            if (loc.distanceTo(it) < 1.5f && loc.time - lastWriteMs < 30_000) {
+            if (loc.distanceTo(it) < minDistM && loc.time - lastWriteMs < 30_000) {
                 lastAccuracy = loc.accuracy
                 lastLat = loc.latitude
                 lastLon = loc.longitude
