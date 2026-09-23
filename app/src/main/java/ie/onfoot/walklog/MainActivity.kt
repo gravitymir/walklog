@@ -3,6 +3,7 @@ package ie.onfoot.walklog
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
@@ -13,29 +14,29 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.Gravity
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.FileProvider
-import android.view.WindowManager
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Один экран: СТАРТ / СТОП / ПОДЕЛИТЬСЯ, живой статус записи.
- * Интерфейс собран кодом — ни одного layout-файла, читается сверху вниз.
+ * One screen: START/STOP toggle, SHARE track picker, live status.
+ * UI is built in code — no layout files, reads top to bottom.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var clock: TextView
     private lateinit var status: TextView
-    private lateinit var startBtn: Button
-    private lateinit var stopBtn: Button
+    private lateinit var toggleBtn: Button
     private val ui = Handler(Looper.getMainLooper())
     private val hms = SimpleDateFormat("HH:mm:ss", Locale.US)
     private var keepScreenUntil = 0L
@@ -43,36 +44,41 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ХЛОПУШКА: огромные часы — показать камере для синхронизации
+        // SLATE: huge clock to show to the camera; even bigger in landscape
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        // Same face as the channel's intro titles (JetBrains Mono, OFL — license bundled in assets)
+        val mono = Typeface.createFromAsset(assets, "fonts/JetBrainsMono-ExtraBold.ttf")
         clock = TextView(this).apply {
-            textSize = 52f
-            typeface = Typeface.MONOSPACE
+            textSize = if (landscape) 120f else 52f
+            typeface = mono
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(0, 40, 0, 0)
+            setPadding(0, if (landscape) 10 else 40, 0, 0)
         }
         status = TextView(this).apply {
-            textSize = 22f
-            typeface = Typeface.MONOSPACE
+            textSize = if (landscape) 26f else 22f
+            typeface = mono
             setTextColor(Color.rgb(70, 235, 90))
             gravity = Gravity.CENTER
-            setPadding(0, 20, 0, 60)
+            setPadding(0, 20, 0, if (landscape) 20 else 60)
         }
-        startBtn = big("▶  СТАРТ") { startRec() }
-        stopBtn = big("■  СТОП") {
-            startService(Intent(this, LogService::class.java).setAction(LogService.ACTION_STOP))
+        // Single toggle: START while idle, STOP while recording.
+        toggleBtn = big("▶  START") {
+            if (LogService.running) {
+                startService(Intent(this, LogService::class.java).setAction(LogService.ACTION_STOP))
+            } else {
+                startRec()
+            }
         }
-        val shareBtn = big("⤴  ПОДЕЛИТЬСЯ ПОСЛЕДНИМ") { shareLast() }
+        val shareBtn = big("⤴  SHARE TRACK") { pickTrack() }
 
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(19, 21, 25))
-            setPadding(48, 48, 48, 48)
+            setPadding(48, 24, 48, 24)
             addView(clock)
             addView(status)
-            addView(startBtn)
-            addView(space())
-            addView(stopBtn)
+            addView(toggleBtn)
             addView(space())
             addView(shareBtn)
         })
@@ -84,48 +90,55 @@ class MainActivity : AppCompatActivity() {
     private fun big(text: String, onClick: () -> Unit) = Button(this).apply {
         this.text = text
         textSize = 20f
-        setPadding(0, 44, 0, 44)
+        setPadding(0, 36, 0, 36)
         setOnClickListener { onClick() }
     }
 
-    private fun space() = TextView(this).apply { height = 32 }
+    private fun space() = TextView(this).apply { height = 24 }
 
     private fun startRec() {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED
         ) {
             askPermissions()
-            Toast.makeText(this, "Нужно разрешение на геолокацию", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Location permission is required", Toast.LENGTH_LONG).show()
             return
         }
         askBatteryExemption()
         val i = Intent(this, LogService::class.java).setAction(LogService.ACTION_START)
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
-        // держим экран включённым 2 минуты — успеть показать хлопушку камере
+        // keep the screen on for 2 minutes — time to show the slate to the camera
         keepScreenUntil = System.currentTimeMillis() + 2 * 60 * 1000
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
-    private fun shareLast() {
-        val path = LogService.lastFile ?: newestTrack()?.absolutePath
-        if (path == null) {
-            Toast.makeText(this, "Треков ещё нет", Toast.LENGTH_SHORT).show()
+    /** All tracks, newest first; tap one to share it. */
+    private fun pickTrack() {
+        val files = File(getExternalFilesDir(null), "tracks")
+            .listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
+        if (files.isEmpty()) {
+            Toast.makeText(this, "No tracks yet", Toast.LENGTH_SHORT).show()
             return
         }
-        val uri: Uri = FileProvider.getUriForFile(this, "ie.onfoot.walklog.files", File(path))
+        AlertDialog.Builder(this)
+            .setTitle("Share track")
+            .setItems(files.map { it.name }.toTypedArray()) { _, i -> shareFile(files[i]) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun shareFile(file: File) {
+        val uri: Uri = FileProvider.getUriForFile(this, "ie.onfoot.walklog.files", file)
         startActivity(
             Intent.createChooser(
                 Intent(Intent.ACTION_SEND)
                     .setType("application/gpx+xml")
                     .putExtra(Intent.EXTRA_STREAM, uri)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                "Отправить трек"
+                "Share track"
             )
         )
     }
-
-    private fun newestTrack(): File? =
-        File(getExternalFilesDir(null), "tracks").listFiles()?.maxByOrNull { it.lastModified() }
 
     private fun askPermissions() {
         val need = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -143,22 +156,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Обновление экрана: часы — 5 раз в секунду, чтобы секунды не отставали. */
+    /** Screen refresh 5×/s so the clock seconds never lag. */
     private fun tick() {
+        clock.text = hms.format(Date())
         if (LogService.running) {
-            clock.text = hms.format(Date())
-            status.text = "%.5f  %.5f\n● REC  %d точек  %.2f км  ±%.0f м".format(
+            status.text = "%.5f  %.5f\n● REC  %d pts  %.2f km  ±%.0f m".format(
                 Locale.US, LogService.lastLat, LogService.lastLon,
                 LogService.points, LogService.meters / 1000, LogService.lastAccuracy
             )
+            toggleBtn.text = "■  STOP"
             if (keepScreenUntil > 0 && System.currentTimeMillis() > keepScreenUntil) {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 keepScreenUntil = 0
             }
         } else {
-            clock.text = ""
-            val n = File(getExternalFilesDir(null), "tracks").listFiles()?.size ?: 0
-            status.text = "⏸ не пишем\nтреков на телефоне: $n"
+            status.text = ""
+            toggleBtn.text = "▶  START"
         }
         ui.postDelayed({ tick() }, 200)
     }

@@ -142,7 +142,7 @@ class LogService : Service(), LocationListener {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Запись трека", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL, "Track recording", NotificationManager.IMPORTANCE_LOW)
             )
         }
         val stopIntent = PendingIntent.getService(
@@ -157,11 +157,11 @@ class LogService : Service(), LocationListener {
         )
         val n = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("REC ● %d точек • %.2f км".format(Locale.US, points, meters / 1000))
-            .setContentText("точность ±%.0f м — нажми, чтобы открыть".format(lastAccuracy))
+            .setContentTitle("REC ● %d pts • %.2f km".format(Locale.US, points, meters / 1000))
+            .setContentText("accuracy ±%.0f m — tap to open".format(lastAccuracy))
             .setOngoing(true)
             .setContentIntent(openIntent)
-            .addAction(0, "СТОП", stopIntent)
+            .addAction(0, "STOP", stopIntent)
             .build()
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
