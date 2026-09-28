@@ -9,6 +9,9 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +20,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Button
@@ -27,7 +31,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import android.util.TypedValue
 import androidx.core.app.ActivityCompat
 import androidx.core.content.FileProvider
 import androidx.core.widget.TextViewCompat
@@ -37,40 +40,70 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * One screen: START/STOP toggle, SHARE track picker, live status.
- * UI is built in code — no layout files, reads top to bottom.
+ * Two screens, both built in code:
+ *  - main: clock, ADD/STOP toggle, SETTINGS, TRACKS;
+ *  - pre-start (after ADD): clock, live GPS check, walk description, START.
+ * Landscape is a pure camera slate: giant clock, no buttons.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var clock: TextView
     private lateinit var status: TextView
     private lateinit var toggleBtn: Button
+    private lateinit var mainView: LinearLayout
+
+    private lateinit var psClock: TextView
+    private lateinit var psCoords: TextView
+    private lateinit var psDesc: EditText
+    private lateinit var psView: LinearLayout
+    private var preStart = false
+    private var previewLoc: Location? = null
+
+    private lateinit var dateLine: TextView
+    private var landscape = false
+
     private val ui = Handler(Looper.getMainLooper())
     private val hms = SimpleDateFormat("HH:mm:ss", Locale.US)
+    // slate date: 28.09 SEPTEMBER 2026 — digits for quick reading, word against digit typos
+    private val slateDate = SimpleDateFormat("dd.MM MMMM yyyy", Locale.US)
+
+    // live coordinates on the pre-start screen, before any recording begins
+    private val previewListener = object : LocationListener {
+        override fun onLocationChanged(l: Location) { previewLoc = l }
+        @Deprecated("Deprecated in Java")
+        override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
+        override fun onProviderEnabled(p: String) {}
+        override fun onProviderDisabled(p: String) { previewLoc = null }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Landscape = pure camera slate: giant clock + coords, no buttons,
-        // screen never sleeps. Portrait = the control panel.
-        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         // Same face as the channel's intro titles (JetBrains Mono, OFL — license bundled in assets)
         val mono = Typeface.createFromAsset(assets, "fonts/JetBrainsMono-ExtraBold.ttf")
+
         clock = TextView(this).apply {
             typeface = mono
             setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(0, if (landscape) 10 else 40, 0, 0)
+            gravity = if (landscape) Gravity.TOP or Gravity.CENTER_HORIZONTAL else Gravity.CENTER
+            setPadding(0, if (landscape) 0 else 40, 0, 0)
             if (landscape) {
                 // fill the width with the biggest size that keeps HH:MM:SS on one line
                 maxLines = 1
                 TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
                     this, 40, 300, 2, TypedValue.COMPLEX_UNIT_SP
                 )
-                text = "88:88:88" // placeholder so the first measure is full-width
+                text = "88:88:88"
             } else {
                 textSize = 52f
             }
+        }
+        dateLine = TextView(this).apply {
+            textSize = 44f
+            typeface = mono
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
         }
         status = TextView(this).apply {
             textSize = if (landscape) 34f else 22f
@@ -78,27 +111,33 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.rgb(70, 235, 90))
             gravity = Gravity.CENTER
             setPadding(0, 20, 0, if (landscape) 20 else 60)
+            setOnClickListener {
+                val lm = getSystemService(LocationManager::class.java)
+                if (!lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                }
+            }
         }
-        // Single toggle: START while idle, STOP while recording.
-        toggleBtn = big("▶  START") {
+        // ADD while idle (opens the pre-start screen), STOP while recording
+        toggleBtn = big("＋  ADD WALK") {
             if (LogService.running) {
                 startService(Intent(this, LogService::class.java).setAction(LogService.ACTION_STOP))
+                psDesc.setText("")
             } else {
-                startRec()
+                enterPreStart()
             }
         }
 
-        setContentView(LinearLayout(this).apply {
+        mainView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(19, 21, 25))
-            // landscape slate: no side margins — every pixel goes to the clock
-            if (landscape) setPadding(0, 0, 0, 0) else setPadding(48, 24, 48, 24)
-            gravity = if (landscape) Gravity.CENTER_VERTICAL else Gravity.NO_GRAVITY
+            if (landscape) setPadding(0, 0, 0, 16) else setPadding(48, 24, 48, 24)
             if (landscape) {
-                // autosize needs bounded height: the clock takes all space above the status
+                // slate order, top to bottom: giant clock, date line, GPS line
                 addView(clock, LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
                 ))
+                addView(dateLine)
             } else {
                 addView(clock)
             }
@@ -108,14 +147,107 @@ class MainActivity : AppCompatActivity() {
                 addView(space())
                 addView(big("⚙  SETTINGS") { showSettings() })
                 addView(space())
-                addView(big("⤴  SHARE TRACK") { pickTrack() })
+                addView(big("☰  TRACKS") { pickTrack() })
             }
-        })
+        }
 
-        if (landscape) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        buildPreStart(mono)
+        setContentView(mainView)
+
+        if (landscape) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // the slate shows live coordinates even before recording starts
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED
+            ) {
+                try {
+                    getSystemService(LocationManager::class.java)
+                        .requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, previewListener)
+                } catch (_: SecurityException) {}
+            }
+        }
 
         askPermissions()
         tick()
+    }
+
+    private fun buildPreStart(mono: Typeface) {
+        psClock = TextView(this).apply {
+            textSize = 52f
+            typeface = mono
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, 40, 0, 0)
+        }
+        psCoords = TextView(this).apply {
+            textSize = 20f
+            typeface = mono
+            gravity = Gravity.CENTER
+            setPadding(0, 24, 0, 24)
+            setOnClickListener {
+                // tapping the warning opens the system location toggle
+                val lm = getSystemService(LocationManager::class.java)
+                if (!lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                }
+            }
+        }
+        psDesc = EditText(this).apply {
+            hint = "Description of this walk (optional)"
+            setHintTextColor(Color.rgb(110, 115, 125))
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            minLines = 2
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        psView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(19, 21, 25))
+            setPadding(48, 24, 48, 24)
+            addView(psClock)
+            addView(psCoords)
+            addView(psDesc)
+            addView(space())
+            addView(big("▶  START") {
+                leavePreStart()
+                startRec(psDesc.text.toString().trim())
+            })
+        }
+    }
+
+    private fun enterPreStart() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            askPermissions()
+            Toast.makeText(this, "Location permission is required", Toast.LENGTH_LONG).show()
+            return
+        }
+        preStart = true
+        previewLoc = null
+        setContentView(psView)
+        try {
+            val lm = getSystemService(LocationManager::class.java)
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, previewListener)
+        } catch (_: SecurityException) {}
+    }
+
+    private fun leavePreStart() {
+        getSystemService(LocationManager::class.java).removeUpdates(previewListener)
+        preStart = false
+        setContentView(mainView)
+    }
+
+    override fun onDestroy() {
+        getSystemService(LocationManager::class.java).removeUpdates(previewListener)
+        super.onDestroy()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (preStart) leavePreStart() else @Suppress("DEPRECATION") super.onBackPressed()
     }
 
     private fun big(text: String, onClick: () -> Unit) = Button(this).apply {
@@ -127,14 +259,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun space() = TextView(this).apply { height = 24 }
 
-    private fun startRec() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            askPermissions()
-            Toast.makeText(this, "Location permission is required", Toast.LENGTH_LONG).show()
-            return
-        }
+    private fun startRec(desc: String) {
         val prefs = getSharedPreferences(LogService.PREFS, MODE_PRIVATE)
         val nm = getSystemService(NotificationManager::class.java)
         val dpm = getSystemService(DevicePolicyManager::class.java)
@@ -160,7 +285,9 @@ class MainActivity : AppCompatActivity() {
         }
         askBatteryExemption()
 
-        val i = Intent(this, LogService::class.java).setAction(LogService.ACTION_START)
+        val i = Intent(this, LogService::class.java)
+            .setAction(LogService.ACTION_START)
+            .putExtra(LogService.EXTRA_DESC, desc)
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
 
         // The shoot must not be interrupted: total silence, app away, screen dark —
@@ -172,7 +299,7 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getBoolean(LogService.KEY_LOCK, true)) dpm.lockNow()
     }
 
-    /** All tracks, newest first; tap one to share it. */
+    /** All tracks, newest first; tap one to see details and share. */
     private fun pickTrack() {
         val files = File(getExternalFilesDir(null), "tracks")
             .listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
@@ -181,9 +308,34 @@ class MainActivity : AppCompatActivity() {
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("Share track")
-            .setItems(files.map { it.name }.toTypedArray()) { _, i -> shareFile(files[i]) }
-            .setNegativeButton("Cancel", null)
+            .setTitle("Tracks")
+            .setItems(files.map { it.name }.toTypedArray()) { _, i -> showTrackDetails(files[i]) }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun showTrackDetails(file: File) {
+        val text = runCatching { file.readText() }.getOrDefault("")
+        val desc = Regex("<desc>(.*?)</desc>", RegexOption.DOT_MATCHES_ALL)
+            .find(text)?.groupValues?.get(1)
+            ?.replace("&lt;", "<")?.replace("&gt;", ">")?.replace("&amp;", "&")
+        val points = Regex("<trkpt").findAll(text).count()
+        val date = SimpleDateFormat("EEE, d MMM yyyy  HH:mm", Locale.US).format(Date(file.lastModified()))
+        val size = if (file.length() >= 1_048_576)
+            "%.1f MB".format(Locale.US, file.length() / 1_048_576.0)
+        else
+            "%d KB".format(file.length() / 1024)
+
+        AlertDialog.Builder(this)
+            .setTitle(file.name)
+            .setMessage(buildString {
+                append(date).append('\n')
+                append("$points points • $size\n")
+                append('\n')
+                append(if (desc.isNullOrBlank()) "(no description)" else desc)
+            })
+            .setPositiveButton("Share") { _, _ -> shareFile(file) }
+            .setNegativeButton("Close", null)
             .show()
     }
 
@@ -274,10 +426,42 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** GPS state → a TextView: red = off, yellow = searching, green = fix. */
+    private fun gpsInto(tv: TextView) {
+        val lm = getSystemService(LocationManager::class.java)
+        when {
+            LogService.running && LogService.points > 0 -> {
+                tv.setTextColor(Color.rgb(70, 235, 90))
+                tv.text = "%.5f  %.5f  ±%.0f m".format(
+                    Locale.US, LogService.lastLat, LogService.lastLon, LogService.lastAccuracy
+                )
+            }
+            !lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> {
+                tv.setTextColor(Color.rgb(255, 90, 80))
+                tv.text = "⚠  GPS IS OFF — tap here to enable"
+            }
+            previewLoc == null -> {
+                tv.setTextColor(Color.rgb(255, 200, 60))
+                tv.text = "Searching satellites…\n(open sky helps)"
+            }
+            else -> {
+                val l = previewLoc!!
+                tv.setTextColor(Color.rgb(70, 235, 90))
+                tv.text = "%.5f  %.5f\nGPS OK  ±%.0f m".format(
+                    Locale.US, l.latitude, l.longitude, l.accuracy
+                )
+            }
+        }
+    }
+
     /** Screen refresh 5×/s so the clock seconds never lag. */
     private fun tick() {
-        clock.text = hms.format(Date())
-        if (LogService.running) {
+        val now = hms.format(Date())
+        clock.text = now
+        if (landscape) {
+            dateLine.text = slateDate.format(Date()).uppercase(Locale.US)
+            gpsInto(status)
+        } else if (LogService.running) {
             status.text = "%.5f  %.5f\n● REC  %d pts  %.2f km  ±%.0f m".format(
                 Locale.US, LogService.lastLat, LogService.lastLon,
                 LogService.points, LogService.meters / 1000, LogService.lastAccuracy
@@ -285,7 +469,11 @@ class MainActivity : AppCompatActivity() {
             toggleBtn.text = "■  STOP"
         } else {
             status.text = ""
-            toggleBtn.text = "▶  START"
+            toggleBtn.text = "＋  ADD WALK"
+        }
+        if (preStart) {
+            psClock.text = now
+            gpsInto(psCoords)
         }
         ui.postDelayed({ tick() }, 200)
     }

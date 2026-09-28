@@ -35,6 +35,7 @@ class LogService : Service(), LocationListener {
     companion object {
         const val ACTION_START = "start"
         const val ACTION_STOP = "stop"
+        const val EXTRA_DESC = "desc"
         const val CHANNEL = "walklog"
 
         // живое состояние для MainActivity
@@ -69,7 +70,7 @@ class LogService : Service(), LocationListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> start()
+            ACTION_START -> start(intent.getStringExtra(EXTRA_DESC) ?: "")
             ACTION_STOP -> stop()
         }
         // если система убьёт и пересоздаст сервис — не рестартуем запись сами,
@@ -77,16 +78,19 @@ class LogService : Service(), LocationListener {
         return START_NOT_STICKY
     }
 
-    private fun start() {
+    private fun start(desc: String) {
         if (running) return
 
         // файл: Android/data/ie.onfoot.walklog/files/tracks/walk_ГГГГММДД_ЧЧММСС.gpx
         val dir = File(getExternalFilesDir(null), "tracks").apply { mkdirs() }
         val name = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val file = File(dir, "walk_$name.gpx")
+        // описание прогулки, введённое на экране ADD, — в стандартный тег <desc>
+        val descXml = if (desc.isBlank()) "" else
+            "<desc>${desc.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")}</desc>"
         writer = FileWriter(file, true).apply {
             write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-            write("<gpx version=\"1.1\" creator=\"WalkLog\"><trk><name>walk_$name</name><trkseg>\n")
+            write("<gpx version=\"1.1\" creator=\"WalkLog\"><trk><name>walk_$name</name>$descXml<trkseg>\n")
             flush()
         }
         lastFile = file.absolutePath
