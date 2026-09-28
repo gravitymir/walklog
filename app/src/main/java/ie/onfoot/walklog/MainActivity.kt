@@ -429,7 +429,7 @@ class MainActivity : AppCompatActivity() {
                     if (desc != null) setPadding(0, 8, 0, 0)
                 })
                 addView(TextView(this@MainActivity).apply {
-                    text = f.name.removePrefix("walk_")
+                    text = f.name // real file name, as it leaves the phone
                     textSize = 14f
                     setTextColor(Color.rgb(140, 145, 155))
                     setPadding(0, 10, 0, 0)
