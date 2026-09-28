@@ -400,6 +400,7 @@ class MainActivity : AppCompatActivity() {
             val timeStr = SimpleDateFormat("HH:mm:ss", Locale.US).format(started)
             val monthWord = SimpleDateFormat("MMMM", Locale.US).format(started).uppercase(Locale.US)
             val dayMonth = SimpleDateFormat("dd.MM", Locale.US).format(started)
+            val weekday = SimpleDateFormat("EEEE", Locale.US).format(started).uppercase(Locale.US)
             val desc = readDesc(f)
 
             val card = LinearLayout(this).apply {
@@ -412,26 +413,21 @@ class MainActivity : AppCompatActivity() {
                 setPadding(36, 28, 36, 28)
                 isClickable = true
                 setOnClickListener { showTrackDetails(f) }
+                // optional first line: the walk description, in the brand green
                 if (desc != null) {
                     addView(TextView(this@MainActivity).apply {
                         text = desc
                         textSize = 18f
-                        setTextColor(Color.WHITE)
-                    })
-                    addView(TextView(this@MainActivity).apply {
-                        text = "$timeStr  $dayMonth $monthWord"
-                        textSize = 15f
-                        setTextColor(Color.rgb(170, 175, 185))
-                        setPadding(0, 8, 0, 0)
-                    })
-                } else {
-                    // no description: start time, month word, date digits
-                    addView(TextView(this@MainActivity).apply {
-                        text = "$timeStr\n$monthWord\n$dayMonth"
-                        textSize = 18f
-                        setTextColor(Color.WHITE)
+                        setTextColor(Color.rgb(70, 235, 90))
                     })
                 }
+                // always: start time, month word, dd.MM, weekday word
+                addView(TextView(this@MainActivity).apply {
+                    text = "$timeStr\n$monthWord\n$dayMonth\n$weekday"
+                    textSize = 18f
+                    setTextColor(Color.WHITE)
+                    if (desc != null) setPadding(0, 8, 0, 0)
+                })
                 addView(TextView(this@MainActivity).apply {
                     text = f.name.removePrefix("walk_")
                     textSize = 14f
