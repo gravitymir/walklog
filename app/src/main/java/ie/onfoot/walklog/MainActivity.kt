@@ -48,6 +48,12 @@ import java.util.Locale
  */
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        // переживает пересоздание экрана при повороте — хлопушка и ADD
+        // показывают координаты сразу, без нового поиска
+        @Volatile private var previewLoc: Location? = null
+    }
+
     private lateinit var clock: TextView
     private lateinit var upLine: TextView    // время от START, голубым
     private lateinit var downLine: TextView  // остаток обратного таймера
@@ -63,7 +69,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var psStartBtn: Button
     private lateinit var psView: LinearLayout
     private var preStart = false
-    private var previewLoc: Location? = null
 
     private lateinit var dateLine: TextView
     private var landscape = false
@@ -176,21 +181,32 @@ class MainActivity : AppCompatActivity() {
         buildPreStart(mono)
         setContentView(mainView)
 
-        if (landscape) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            // the slate shows live coordinates even before recording starts
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED
-            ) {
-                try {
-                    getSystemService(LocationManager::class.java)
-                        .requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, previewListener)
-                } catch (_: SecurityException) {}
-            }
-        }
+        if (landscape) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         askPermissions()
         tick()
+    }
+
+    // GPS preview runs whenever the app is on screen — any screen, any
+    // orientation — so ADD and the slate never start a search from zero
+    override fun onResume() {
+        super.onResume()
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            try {
+                val lm = getSystemService(LocationManager::class.java)
+                if (previewLoc == null) {
+                    previewLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                }
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, previewListener)
+            } catch (_: SecurityException) {}
+        }
+    }
+
+    override fun onPause() {
+        getSystemService(LocationManager::class.java).removeUpdates(previewListener)
+        super.onPause()
     }
 
     private fun buildPreStart(mono: Typeface) {
@@ -271,16 +287,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
         preStart = true
-        previewLoc = null
         setContentView(psView)
-        try {
-            val lm = getSystemService(LocationManager::class.java)
-            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, previewListener)
-        } catch (_: SecurityException) {}
     }
 
     private fun leavePreStart() {
-        getSystemService(LocationManager::class.java).removeUpdates(previewListener)
         preStart = false
         setContentView(mainView)
     }
@@ -565,10 +575,18 @@ class MainActivity : AppCompatActivity() {
             }
             else -> {
                 val l = previewLoc!!
-                tv.setTextColor(Color.rgb(70, 235, 90))
-                tv.text = "%.5f  %.5f\nGPS OK  ±%.0f m".format(
-                    Locale.US, l.latitude, l.longitude, l.accuracy
-                )
+                if (System.currentTimeMillis() - l.time < 10_000) {
+                    tv.setTextColor(Color.rgb(70, 235, 90))
+                    tv.text = "%.5f  %.5f\nGPS OK  ±%.0f m".format(
+                        Locale.US, l.latitude, l.longitude, l.accuracy
+                    )
+                } else {
+                    // system-cached fix: shown instantly, refreshed in seconds
+                    tv.setTextColor(Color.rgb(255, 200, 60))
+                    tv.text = "%.5f  %.5f\nlast known — refreshing…".format(
+                        Locale.US, l.latitude, l.longitude
+                    )
+                }
             }
         }
     }
