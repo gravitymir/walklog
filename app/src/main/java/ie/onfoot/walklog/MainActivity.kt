@@ -27,6 +27,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.NumberPicker
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -57,7 +58,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var psClock: TextView
     private lateinit var psCoords: TextView
     private lateinit var psDesc: EditText
-    private lateinit var psTimer: EditText
+    private lateinit var psHours: NumberPicker
+    private lateinit var psMins: NumberPicker
     private lateinit var psStartBtn: Button
     private lateinit var psView: LinearLayout
     private var preStart = false
@@ -222,16 +224,30 @@ class MainActivity : AppCompatActivity() {
                 InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                 InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         }
-        psTimer = EditText(this).apply {
-            hint = "Countdown, e.g. 2:26 or 146 min (optional)"
-            setHintTextColor(Color.rgb(110, 115, 125))
-            setTextColor(Color.WHITE)
+        psHours = NumberPicker(this).apply { minValue = 0; maxValue = 99 }
+        psMins = NumberPicker(this).apply {
+            minValue = 0; maxValue = 59
+            setFormatter { "%02d".format(it) }
+        }
+        fun pickerLabel(text: String) = TextView(this).apply {
+            this.text = text
             textSize = 18f
-            inputType = InputType.TYPE_CLASS_DATETIME
+            setTextColor(Color.rgb(150, 155, 165))
+            gravity = Gravity.CENTER
+        }
+        val timerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 16, 0, 0)
+            addView(pickerLabel("Countdown:  "))
+            addView(psHours)
+            addView(pickerLabel(" h  "))
+            addView(psMins)
+            addView(pickerLabel(" min"))
         }
         psStartBtn = big("▶  START") {
             leavePreStart()
-            startRec(psDesc.text.toString().trim(), parseTimer(psTimer.text.toString()))
+            startRec(psDesc.text.toString().trim(), psHours.value * 60 + psMins.value)
         }
         psView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -240,21 +256,10 @@ class MainActivity : AppCompatActivity() {
             addView(psClock)
             addView(psCoords)
             addView(psDesc)
-            addView(psTimer)
+            addView(timerRow)
             addView(space())
             addView(psStartBtn)
         }
-    }
-
-    /** "2:26" → 146; "146" → 146; junk/blank → 0 (no timer). */
-    private fun parseTimer(s: String): Int {
-        val t = s.trim()
-        if (t.isEmpty()) return 0
-        if (':' in t) {
-            val (h, m) = t.split(':', limit = 2)
-            return ((h.toIntOrNull() ?: 0) * 60 + (m.toIntOrNull() ?: 0)).coerceAtLeast(0)
-        }
-        return (t.toIntOrNull() ?: 0).coerceAtLeast(0)
     }
 
     private fun enterPreStart() {
