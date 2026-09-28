@@ -48,6 +48,8 @@ class LogService : Service(), LocationListener {
 
         // обратный таймер («камера сядет через 2:26»): 0 = не задан
         @Volatile var timerEndMs = 0L
+        // момент нажатия START — для таймера «сколько уже идём»
+        @Volatile var startedMs = 0L
 
         // живое состояние для MainActivity
         @Volatile var running = false
@@ -129,6 +131,7 @@ class LogService : Service(), LocationListener {
 
         running = true
         alarmShots = 0
+        startedMs = System.currentTimeMillis()
         timerEndMs = if (timerMin > 0) System.currentTimeMillis() + timerMin * 60_000L else 0L
         if (timerMin > 0) alarmHandler.postDelayed({ fireAlarm() }, timerMin * 60_000L)
         startInForeground()
@@ -169,6 +172,7 @@ class LogService : Service(), LocationListener {
             running = false
             alarmHandler.removeCallbacksAndMessages(null)
             timerEndMs = 0L
+            startedMs = 0L
             alarmShots = 0
             // возвращаем звонки: «Не беспокоить» включался на время записи
             val nm = getSystemService(NotificationManager::class.java)

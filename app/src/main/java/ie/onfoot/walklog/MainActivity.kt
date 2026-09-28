@@ -48,6 +48,8 @@ import java.util.Locale
 class MainActivity : AppCompatActivity() {
 
     private lateinit var clock: TextView
+    private lateinit var upLine: TextView    // время от START, голубым
+    private lateinit var downLine: TextView  // остаток обратного таймера
     private lateinit var status: TextView
     private lateinit var toggleBtn: Button
     private lateinit var mainView: LinearLayout
@@ -107,6 +109,20 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
         }
+        upLine = TextView(this).apply {
+            textSize = 34f
+            typeface = mono
+            setTextColor(Color.rgb(100, 190, 255))
+            gravity = Gravity.CENTER
+            visibility = android.view.View.GONE
+        }
+        downLine = TextView(this).apply {
+            textSize = 34f
+            typeface = mono
+            setTextColor(Color.rgb(255, 200, 60))
+            gravity = Gravity.CENTER
+            visibility = android.view.View.GONE
+        }
         status = TextView(this).apply {
             textSize = if (landscape) 34f else 22f
             typeface = mono
@@ -142,6 +158,8 @@ class MainActivity : AppCompatActivity() {
                 addView(dateLine)
             } else {
                 addView(clock)
+                addView(upLine)
+                addView(downLine)
             }
             addView(status)
             if (!landscape) {
@@ -490,20 +508,35 @@ class MainActivity : AppCompatActivity() {
             dateLine.text = slateDate.format(Date()).uppercase(Locale.US)
             gpsInto(status)
         } else if (LogService.running) {
-            val timer = when {
-                LogService.timerEndMs > 0L -> {
-                    val rem = LogService.timerEndMs - System.currentTimeMillis()
-                    if (rem > 0) "  ⏱ %d:%02d".format(rem / 3_600_000, rem / 60_000 % 60)
-                    else "  ⏰ TIME!"
+            // forward timer: how long we've been recording
+            val up = System.currentTimeMillis() - LogService.startedMs
+            upLine.visibility = android.view.View.VISIBLE
+            upLine.text = "▲ %d:%02d:%02d".format(up / 3_600_000, up / 60_000 % 60, up / 1000 % 60)
+            // backward timer: how much is left until the alarm
+            if (LogService.timerEndMs > 0L) {
+                val rem = LogService.timerEndMs - System.currentTimeMillis()
+                downLine.visibility = android.view.View.VISIBLE
+                if (rem > 0) {
+                    // amber normally, red for the last 10 minutes
+                    downLine.setTextColor(
+                        if (rem < 10 * 60_000L) Color.rgb(255, 90, 80) else Color.rgb(255, 200, 60)
+                    )
+                    downLine.text = "▼ %d:%02d:%02d".format(rem / 3_600_000, rem / 60_000 % 60, rem / 1000 % 60)
+                } else {
+                    downLine.setTextColor(Color.rgb(255, 90, 80))
+                    downLine.text = "⏰ TIME!"
                 }
-                else -> ""
+            } else {
+                downLine.visibility = android.view.View.GONE
             }
-            status.text = "%.5f  %.5f\n● REC  %d pts  %.2f km  ±%.0f m%s".format(
+            status.text = "%.5f  %.5f\n● REC  %d pts  %.2f km  ±%.0f m".format(
                 Locale.US, LogService.lastLat, LogService.lastLon,
-                LogService.points, LogService.meters / 1000, LogService.lastAccuracy, timer
+                LogService.points, LogService.meters / 1000, LogService.lastAccuracy
             )
             toggleBtn.text = "■  STOP"
         } else {
+            upLine.visibility = android.view.View.GONE
+            downLine.visibility = android.view.View.GONE
             status.text = ""
             toggleBtn.text = "＋  ADD WALK"
         }
