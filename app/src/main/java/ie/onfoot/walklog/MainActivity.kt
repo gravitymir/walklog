@@ -548,11 +548,17 @@ class MainActivity : AppCompatActivity() {
         if (preStart) {
             psClock.text = now
             gpsInto(psCoords)
-            // no GPS — no START: a blind track is worthless
+            // START unlocks only on a fresh GPS fix: no blind tracks, no
+            // "searching" starts — green button = satellites locked, go
             val gpsOn = getSystemService(LocationManager::class.java)
                 .isProviderEnabled(LocationManager.GPS_PROVIDER)
-            psStartBtn.isEnabled = gpsOn
-            psStartBtn.alpha = if (gpsOn) 1f else 0.35f
+            val fresh = previewLoc?.let { System.currentTimeMillis() - it.time < 10_000 } == true
+            val ready = gpsOn && fresh
+            psStartBtn.isEnabled = ready
+            psStartBtn.alpha = if (ready) 1f else 0.35f
+            psStartBtn.backgroundTintList =
+                if (ready) android.content.res.ColorStateList.valueOf(Color.rgb(34, 150, 70))
+                else null
         }
         ui.postDelayed({ tick() }, 200)
     }
