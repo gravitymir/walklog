@@ -350,7 +350,17 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getBoolean(LogService.KEY_LOCK, true)) dpm.lockNow()
     }
 
-    /** All tracks, newest first; tap one to see details and share. */
+    /** Only the GPX header is needed for the list — no full-file reads. */
+    private fun readDesc(f: File): String? = runCatching {
+        val head = CharArray(1200)
+        val n = f.reader().use { it.read(head) }
+        if (n <= 0) return null
+        Regex("<desc>(.*?)</desc>", RegexOption.DOT_MATCHES_ALL)
+            .find(String(head, 0, n))?.groupValues?.get(1)
+            ?.replace("&lt;", "<")?.replace("&gt;", ">")?.replace("&amp;", "&")
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    /** All tracks as bordered cards, newest first; tap one for details. */
     private fun pickTrack() {
         val files = File(getExternalFilesDir(null), "tracks")
             .listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
@@ -358,9 +368,47 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "No tracks yet", Toast.LENGTH_SHORT).show()
             return
         }
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 16, 32, 16)
+        }
+        val dayFmt = SimpleDateFormat("dd.MM", Locale.US)
+        val monthFmt = SimpleDateFormat("MMMM", Locale.US)
+        for (f in files) {
+            val title = readDesc(f)
+                ?: (dayFmt.format(Date(f.lastModified())) + "\n" +
+                    monthFmt.format(Date(f.lastModified())).uppercase(Locale.US))
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setStroke(2, Color.rgb(105, 110, 120)) // border: 1px solid
+                    setColor(Color.TRANSPARENT)
+                    cornerRadius = 10f
+                }
+                setPadding(36, 28, 36, 28)
+                isClickable = true
+                setOnClickListener { showTrackDetails(f) }
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 18f
+                    setTextColor(Color.WHITE)
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = f.name.removePrefix("walk_")
+                    textSize = 14f
+                    setTextColor(Color.rgb(140, 145, 155))
+                    setPadding(0, 10, 0, 0)
+                })
+            }
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 10, 0, 10) }
+            list.addView(card, lp)
+        }
         AlertDialog.Builder(this)
             .setTitle("Tracks")
-            .setItems(files.map { it.name }.toTypedArray()) { _, i -> showTrackDetails(files[i]) }
+            .setView(android.widget.ScrollView(this).apply { addView(list) })
             .setNegativeButton("Close", null)
             .show()
     }
