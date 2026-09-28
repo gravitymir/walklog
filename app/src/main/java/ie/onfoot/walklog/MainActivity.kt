@@ -372,12 +372,17 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 16, 32, 16)
         }
-        val dayFmt = SimpleDateFormat("dd.MM", Locale.US)
-        val monthFmt = SimpleDateFormat("MMMM", Locale.US)
+        val nameFmt = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
         for (f in files) {
-            val title = readDesc(f)
-                ?: (dayFmt.format(Date(f.lastModified())) + "\n" +
-                    monthFmt.format(Date(f.lastModified())).uppercase(Locale.US))
+            // start moment lives in the file name (lastModified is the STOP time)
+            val started = runCatching {
+                nameFmt.parse(f.name.removePrefix("walk_").removeSuffix(".gpx"))
+            }.getOrNull() ?: Date(f.lastModified())
+            val timeStr = SimpleDateFormat("HH:mm:ss", Locale.US).format(started)
+            val monthWord = SimpleDateFormat("MMMM", Locale.US).format(started).uppercase(Locale.US)
+            val dayMonth = SimpleDateFormat("dd.MM", Locale.US).format(started)
+            val desc = readDesc(f)
+
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 background = android.graphics.drawable.GradientDrawable().apply {
@@ -388,11 +393,26 @@ class MainActivity : AppCompatActivity() {
                 setPadding(36, 28, 36, 28)
                 isClickable = true
                 setOnClickListener { showTrackDetails(f) }
-                addView(TextView(this@MainActivity).apply {
-                    text = title
-                    textSize = 18f
-                    setTextColor(Color.WHITE)
-                })
+                if (desc != null) {
+                    addView(TextView(this@MainActivity).apply {
+                        text = desc
+                        textSize = 18f
+                        setTextColor(Color.WHITE)
+                    })
+                    addView(TextView(this@MainActivity).apply {
+                        text = "$timeStr  $dayMonth $monthWord"
+                        textSize = 15f
+                        setTextColor(Color.rgb(170, 175, 185))
+                        setPadding(0, 8, 0, 0)
+                    })
+                } else {
+                    // no description: start time, month word, date digits
+                    addView(TextView(this@MainActivity).apply {
+                        text = "$timeStr\n$monthWord\n$dayMonth"
+                        textSize = 18f
+                        setTextColor(Color.WHITE)
+                    })
+                }
                 addView(TextView(this@MainActivity).apply {
                     text = f.name.removePrefix("walk_")
                     textSize = 14f
