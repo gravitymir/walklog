@@ -71,6 +71,7 @@ class LogService : Service(), LocationListener {
         const val KEY_DND = "dnd_on_start"           // «Не беспокоить» на время записи
         const val KEY_LOCK = "lock_on_start"         // погасить и заблокировать экран
         const val KEY_MINIMIZE = "minimize_on_start" // свернуть приложение
+        const val KEY_TIMER = "timer_enabled"        // показывать обратный таймер на ADD
     }
 
     private var writer: FileWriter? = null

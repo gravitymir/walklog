@@ -66,6 +66,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var psDesc: EditText
     private lateinit var psHours: NumberPicker
     private lateinit var psMins: NumberPicker
+    private lateinit var psTimerRow: LinearLayout
     private lateinit var psStartBtn: Button
     private lateinit var psView: LinearLayout
     private var preStart = false
@@ -111,10 +112,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
         dateLine = TextView(this).apply {
-            textSize = 44f
+            textSize = if (landscape) 44f else 26f
             typeface = mono
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
+            if (!landscape) setPadding(0, 8, 0, 0)
         }
         upLine = TextView(this).apply {
             textSize = 34f
@@ -165,6 +167,7 @@ class MainActivity : AppCompatActivity() {
                 addView(dateLine)
             } else {
                 addView(clock)
+                addView(dateLine)
                 addView(upLine)
                 addView(downLine)
             }
@@ -251,7 +254,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.rgb(150, 155, 165))
             gravity = Gravity.CENTER
         }
-        val timerRow = LinearLayout(this).apply {
+        psTimerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(0, 16, 0, 0)
@@ -262,8 +265,10 @@ class MainActivity : AppCompatActivity() {
             addView(pickerLabel(" min"))
         }
         psStartBtn = big("▶  START") {
+            val timerMin = if (psTimerRow.visibility == android.view.View.VISIBLE)
+                psHours.value * 60 + psMins.value else 0
             leavePreStart()
-            startRec(psDesc.text.toString().trim(), psHours.value * 60 + psMins.value)
+            startRec(psDesc.text.toString().trim(), timerMin)
         }
         psView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -272,7 +277,7 @@ class MainActivity : AppCompatActivity() {
             addView(psClock)
             addView(psCoords)
             addView(psDesc)
-            addView(timerRow)
+            addView(psTimerRow)
             addView(space())
             addView(psStartBtn)
         }
@@ -287,6 +292,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
         preStart = true
+        psTimerRow.visibility =
+            if (getSharedPreferences(LogService.PREFS, MODE_PRIVATE)
+                    .getBoolean(LogService.KEY_TIMER, true)
+            ) android.view.View.VISIBLE else android.view.View.GONE
         setContentView(psView)
     }
 
@@ -492,6 +501,7 @@ class MainActivity : AppCompatActivity() {
         val dnd = check(LogService.KEY_DND, "Silence calls while recording (Do Not Disturb)")
         val lock = check(LogService.KEY_LOCK, "Lock the screen on START")
         val minimize = check(LogService.KEY_MINIMIZE, "Minimize the app on START")
+        val timer = check(LogService.KEY_TIMER, "Countdown timer on the ADD screen")
 
         AlertDialog.Builder(this)
             .setTitle("Settings")
@@ -505,6 +515,7 @@ class MainActivity : AppCompatActivity() {
                 addView(dnd)
                 addView(lock)
                 addView(minimize)
+                addView(timer)
                 addView(label("Applied at the next START").apply { alpha = 0.6f })
             })
             .setPositiveButton("Save") { _, _ ->
@@ -520,6 +531,7 @@ class MainActivity : AppCompatActivity() {
                     .putBoolean(LogService.KEY_DND, dnd.isChecked)
                     .putBoolean(LogService.KEY_LOCK, lock.isChecked)
                     .putBoolean(LogService.KEY_MINIMIZE, minimize.isChecked)
+                    .putBoolean(LogService.KEY_TIMER, timer.isChecked)
                     .apply()
             }
             .setNegativeButton("Cancel", null)
@@ -595,8 +607,8 @@ class MainActivity : AppCompatActivity() {
     private fun tick() {
         val now = hms.format(Date())
         clock.text = now
+        dateLine.text = slateDate.format(Date()).uppercase(Locale.US)
         if (landscape) {
-            dateLine.text = slateDate.format(Date()).uppercase(Locale.US)
             gpsInto(status)
         } else if (LogService.running) {
             // forward timer: how long we've been recording
@@ -628,7 +640,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             upLine.visibility = android.view.View.GONE
             downLine.visibility = android.view.View.GONE
-            status.text = ""
+            gpsInto(status) // idle portrait shows the same live GPS as the slate
             toggleBtn.text = "＋  ADD WALK"
         }
         if (preStart) {
