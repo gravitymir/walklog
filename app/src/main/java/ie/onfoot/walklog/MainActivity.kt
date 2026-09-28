@@ -55,6 +55,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var psClock: TextView
     private lateinit var psCoords: TextView
     private lateinit var psDesc: EditText
+    private lateinit var psTimer: EditText
+    private lateinit var psStartBtn: Button
     private lateinit var psView: LinearLayout
     private var preStart = false
     private var previewLoc: Location? = null
@@ -202,6 +204,17 @@ class MainActivity : AppCompatActivity() {
                 InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                 InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         }
+        psTimer = EditText(this).apply {
+            hint = "Countdown, e.g. 2:26 or 146 min (optional)"
+            setHintTextColor(Color.rgb(110, 115, 125))
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            inputType = InputType.TYPE_CLASS_DATETIME
+        }
+        psStartBtn = big("▶  START") {
+            leavePreStart()
+            startRec(psDesc.text.toString().trim(), parseTimer(psTimer.text.toString()))
+        }
         psView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(19, 21, 25))
@@ -209,12 +222,21 @@ class MainActivity : AppCompatActivity() {
             addView(psClock)
             addView(psCoords)
             addView(psDesc)
+            addView(psTimer)
             addView(space())
-            addView(big("▶  START") {
-                leavePreStart()
-                startRec(psDesc.text.toString().trim())
-            })
+            addView(psStartBtn)
         }
+    }
+
+    /** "2:26" → 146; "146" → 146; junk/blank → 0 (no timer). */
+    private fun parseTimer(s: String): Int {
+        val t = s.trim()
+        if (t.isEmpty()) return 0
+        if (':' in t) {
+            val (h, m) = t.split(':', limit = 2)
+            return ((h.toIntOrNull() ?: 0) * 60 + (m.toIntOrNull() ?: 0)).coerceAtLeast(0)
+        }
+        return (t.toIntOrNull() ?: 0).coerceAtLeast(0)
     }
 
     private fun enterPreStart() {
@@ -259,7 +281,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun space() = TextView(this).apply { height = 24 }
 
-    private fun startRec(desc: String) {
+    private fun startRec(desc: String, timerMin: Int) {
         val prefs = getSharedPreferences(LogService.PREFS, MODE_PRIVATE)
         val nm = getSystemService(NotificationManager::class.java)
         val dpm = getSystemService(DevicePolicyManager::class.java)
@@ -288,12 +310,18 @@ class MainActivity : AppCompatActivity() {
         val i = Intent(this, LogService::class.java)
             .setAction(LogService.ACTION_START)
             .putExtra(LogService.EXTRA_DESC, desc)
+            .putExtra(LogService.EXTRA_TIMER_MIN, timerMin)
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
 
-        // The shoot must not be interrupted: total silence, app away, screen dark —
+        // The shoot must not be interrupted: silence, app away, screen dark —
         // the phone is now a tracker in a pocket until the user unlocks it and taps STOP.
+        // With a countdown set we use "alarms only" instead of total silence:
+        // calls stay dead, but our own timer alarm can ring through.
         if (prefs.getBoolean(LogService.KEY_DND, true)) {
-            nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
+            nm.setInterruptionFilter(
+                if (timerMin > 0) NotificationManager.INTERRUPTION_FILTER_ALARMS
+                else NotificationManager.INTERRUPTION_FILTER_NONE
+            )
         }
         if (prefs.getBoolean(LogService.KEY_MINIMIZE, true)) moveTaskToBack(true)
         if (prefs.getBoolean(LogService.KEY_LOCK, true)) dpm.lockNow()
@@ -462,9 +490,17 @@ class MainActivity : AppCompatActivity() {
             dateLine.text = slateDate.format(Date()).uppercase(Locale.US)
             gpsInto(status)
         } else if (LogService.running) {
-            status.text = "%.5f  %.5f\n● REC  %d pts  %.2f km  ±%.0f m".format(
+            val timer = when {
+                LogService.timerEndMs > 0L -> {
+                    val rem = LogService.timerEndMs - System.currentTimeMillis()
+                    if (rem > 0) "  ⏱ %d:%02d".format(rem / 3_600_000, rem / 60_000 % 60)
+                    else "  ⏰ TIME!"
+                }
+                else -> ""
+            }
+            status.text = "%.5f  %.5f\n● REC  %d pts  %.2f km  ±%.0f m%s".format(
                 Locale.US, LogService.lastLat, LogService.lastLon,
-                LogService.points, LogService.meters / 1000, LogService.lastAccuracy
+                LogService.points, LogService.meters / 1000, LogService.lastAccuracy, timer
             )
             toggleBtn.text = "■  STOP"
         } else {
@@ -474,6 +510,11 @@ class MainActivity : AppCompatActivity() {
         if (preStart) {
             psClock.text = now
             gpsInto(psCoords)
+            // no GPS — no START: a blind track is worthless
+            val gpsOn = getSystemService(LocationManager::class.java)
+                .isProviderEnabled(LocationManager.GPS_PROVIDER)
+            psStartBtn.isEnabled = gpsOn
+            psStartBtn.alpha = if (gpsOn) 1f else 0.35f
         }
         ui.postDelayed({ tick() }, 200)
     }

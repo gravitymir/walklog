@@ -7,9 +7,16 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
 import java.io.File
 import java.io.FileWriter
@@ -36,7 +43,11 @@ class LogService : Service(), LocationListener {
         const val ACTION_START = "start"
         const val ACTION_STOP = "stop"
         const val EXTRA_DESC = "desc"
+        const val EXTRA_TIMER_MIN = "timer_min"
         const val CHANNEL = "walklog"
+
+        // обратный таймер («камера сядет через 2:26»): 0 = не задан
+        @Volatile var timerEndMs = 0L
 
         // живое состояние для MainActivity
         @Volatile var running = false
@@ -65,12 +76,17 @@ class LogService : Service(), LocationListener {
     private var lastLoc: Location? = null
     private var lastWriteMs = 0L
     private var minDistM = DEF_MIN_DIST_M
+    private val alarmHandler = Handler(Looper.getMainLooper())
+    private var alarmShots = 0
     private val utc = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         .apply { timeZone = TimeZone.getTimeZone("UTC") }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> start(intent.getStringExtra(EXTRA_DESC) ?: "")
+            ACTION_START -> start(
+                intent.getStringExtra(EXTRA_DESC) ?: "",
+                intent.getIntExtra(EXTRA_TIMER_MIN, 0)
+            )
             ACTION_STOP -> stop()
         }
         // если система убьёт и пересоздаст сервис — не рестартуем запись сами,
@@ -78,7 +94,7 @@ class LogService : Service(), LocationListener {
         return START_NOT_STICKY
     }
 
-    private fun start(desc: String) {
+    private fun start(desc: String, timerMin: Int) {
         if (running) return
 
         // файл: Android/data/ie.onfoot.walklog/files/tracks/walk_ГГГГММДД_ЧЧММСС.gpx
@@ -112,7 +128,30 @@ class LogService : Service(), LocationListener {
         lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, intervalMs, 0f, this)
 
         running = true
+        alarmShots = 0
+        timerEndMs = if (timerMin > 0) System.currentTimeMillis() + timerMin * 60_000L else 0L
+        if (timerMin > 0) alarmHandler.postDelayed({ fireAlarm() }, timerMin * 60_000L)
         startInForeground()
+    }
+
+    /** Время вышло: тревога сквозь DND-«только будильники» — 6 залпов по 20 с. */
+    private fun fireAlarm() {
+        if (!running) return
+        alarmShots++
+        runCatching {
+            val tg = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+            tg.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 2500)
+            alarmHandler.postDelayed({ tg.release() }, 3000)
+        }
+        runCatching {
+            val vib = if (Build.VERSION.SDK_INT >= 31)
+                getSystemService(VibratorManager::class.java).defaultVibrator
+            else
+                @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as Vibrator
+            vib.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500, 200, 900), -1))
+        }
+        startInForeground() // заголовок в шторке сменится на ⏰ TIME!
+        if (alarmShots < 6) alarmHandler.postDelayed({ fireAlarm() }, 20_000L)
     }
 
     private fun stop() {
@@ -128,6 +167,9 @@ class LogService : Service(), LocationListener {
             wakeLock?.release()
             wakeLock = null
             running = false
+            alarmHandler.removeCallbacksAndMessages(null)
+            timerEndMs = 0L
+            alarmShots = 0
             // возвращаем звонки: «Не беспокоить» включался на время записи
             val nm = getSystemService(NotificationManager::class.java)
             if (nm.isNotificationPolicyAccessGranted &&
@@ -195,9 +237,17 @@ class LogService : Service(), LocationListener {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
+        val timerTag = when {
+            alarmShots > 0 -> " • ⏰ TIME!"
+            timerEndMs > 0L -> {
+                val rem = (timerEndMs - System.currentTimeMillis()).coerceAtLeast(0)
+                " • ⏱ %d:%02d".format(rem / 3_600_000, rem / 60_000 % 60)
+            }
+            else -> ""
+        }
         val n = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("REC ● %d pts • %.2f km".format(Locale.US, points, meters / 1000))
+            .setContentTitle("REC ● %d pts • %.2f km%s".format(Locale.US, points, meters / 1000, timerTag))
             .setContentText("accuracy ±%.0f m — tap to open".format(lastAccuracy))
             .setOngoing(true)
             .setContentIntent(openIntent)
